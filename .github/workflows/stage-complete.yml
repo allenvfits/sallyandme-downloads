@@ -51,6 +51,7 @@ jobs:
         with:
           name: complete-private-hosting-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/sally-transfer/artifact-transfer.json
             ${{ runner.temp }}/sally-transfer/hosting.json
             ${{ runner.temp }}/sally-transfer/removed-incomplete.json
           if-no-files-found: warn
