@@ -1,0 +1,37 @@
+name: Verify one Complete customer ZIP
+on:
+  workflow_dispatch:
+    inputs:
+      release_record:
+        required: true
+        type: string
+      native_record:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.14.0
+      - name: Download and verify private hosted input bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RECORD: ${{ inputs.release_record }}
+          NATIVE_RECORD: ${{ inputs.native_record }}
+        run: node scripts/plan-hosted.mjs
+      - name: Compute and verify the full ZIP without a duplicate archive
+        run: python scripts/plan-complete.py --base "$RUNNER_TEMP/sally-plan/base" --native "$RUNNER_TEMP/sally-plan/native" --hosting "$RUNNER_TEMP/sally-plan/hosting.json" --output "$RUNNER_TEMP/sally-plan/full-zip-plan.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: complete-single-zip-${{ github.run_id }}
+          path: ${{ runner.temp }}/sally-plan/full-zip-plan.json
+          if-no-files-found: error
+          retention-days: 30
