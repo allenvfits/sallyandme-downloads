@@ -1,0 +1,57 @@
+name: Stage verified Complete delivery privately
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_bytes:
+        required: true
+        type: string
+      artifact_sha256:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ARTIFACT_BYTES: ${{ inputs.artifact_bytes }}
+      ARTIFACT_SHA256: ${{ inputs.artifact_sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.14.0
+      - name: Download and verify exact private artifact
+        env:
+          ARTIFACT_URL: ${{ secrets.SALLY_COMPLETE_CANDIDATE_38912631880 }}
+        run: python scripts/stage-complete.py prepare
+      - name: Verify Sally release signature
+        run: |
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          import {verify} from 'node:crypto';
+          import assert from 'node:assert/strict';
+          const root=process.env.RUNNER_TEMP+'/sally-transfer/',read=p=>JSON.parse(readFileSync(root+p,'utf8').replace(/^\uFEFF/,''));
+          const e=read('release.json'),m=read('candidate.json');
+          const key='-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA9YQCgwvqVKxVnOFOf4nlYCL1nj9Xgm5S73aN0VbXpXY=\n-----END PUBLIC KEY-----\n';
+          assert.equal(e.algorithm,'Ed25519');assert.ok(verify(null,Buffer.from(e.payload,'base64'),key,Buffer.from(e.signature,'base64')));
+          assert.deepEqual(JSON.parse(Buffer.from(e.payload,'base64')),m);assert.equal(m.mode,'signed-candidate');assert.equal(m.applicationId,'studio.sallyandme.desktop');assert.equal(m.source.dirty,false);
+          writeFileSync(root+'envelope-verified','verified',{flag:'wx'});
+          JS
+      - name: Upload only verified bytes to existing private draft
+        run: python scripts/stage-complete.py stage
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: complete-private-hosting-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/sally-transfer/hosting.json
+            ${{ runner.temp }}/sally-transfer/removed-incomplete.json
+          if-no-files-found: warn
+          retention-days: 30
