@@ -1,5 +1,5 @@
 """Private staging of one hash-pinned Sally build. Never publishes a release."""
-import hashlib,http.client,json,os,re,sys,urllib.request,urllib.parse,zipfile
+import concurrent.futures,hashlib,http.client,json,os,re,sys,time,urllib.request,urllib.parse,zipfile
 from pathlib import Path
 ROOT=Path(os.environ['RUNNER_TEMP'])/'sally-transfer';ROOT.mkdir(exist_ok=True)
 REPO='allenvfits/sallyandme-downloads';RELEASE='415071552'
@@ -14,12 +14,34 @@ if sys.argv[1]=='prepare':
     assert url.scheme=='https' and not url.username and (url.hostname.endswith('.blob.core.windows.net') or url.hostname.endswith('.actions.githubusercontent.com'))
     expected=int(os.environ['ARTIFACT_BYTES']);assert 0<expected<20*1024**3
     assert re.fullmatch('[a-f0-9]{64}',os.environ['ARTIFACT_SHA256'])
-    total=0;hash=hashlib.sha256()
-    with urllib.request.urlopen(os.environ['ARTIFACT_URL'],timeout=120) as response,(ROOT/'candidate.zip').open('xb') as output:
-        assert response.status==200
-        for chunk in iter(lambda:response.read(8*1024**2),b''):
-            total+=len(chunk);assert total<=expected;hash.update(chunk);output.write(chunk)
-    assert total==expected and hash.hexdigest()==os.environ['ARTIFACT_SHA256']
+    with urllib.request.urlopen(urllib.request.Request(os.environ['ARTIFACT_URL'],method='HEAD'),timeout=60) as response:
+        assert response.status==200 and int(response.headers['Content-Length'])==expected
+        etag=response.headers['ETag'];assert etag
+    with (ROOT/'candidate.zip').open('xb') as output:output.truncate(expected)
+    chunk_size=64*1024**2
+    def download_range(start):
+        end=min(expected,start+chunk_size)-1
+        for attempt in range(3):
+            try:
+                request=urllib.request.Request(os.environ['ARTIFACT_URL'],headers={'Range':f'bytes={start}-{end}','If-Match':etag,'Accept-Encoding':'identity'})
+                with urllib.request.urlopen(request,timeout=120) as response:
+                    assert response.status==206 and response.headers['Content-Range']==f'bytes {start}-{end}/{expected}' and response.headers['ETag']==etag
+                    content=response.read(end-start+2)
+                    assert len(content)==end-start+1,'Truncated artifact range'
+                with (ROOT/'candidate.zip').open('r+b') as output:output.seek(start);output.write(content)
+                return len(content)
+            except Exception:
+                if attempt==2:raise RuntimeError(f'Artifact range {start}-{end} failed after three attempts') from None
+                time.sleep(attempt+1)
+    total=0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        for index,size in enumerate(pool.map(download_range,range(0,expected,chunk_size))):
+            total+=size
+            if index%16==0:print(f'Verified transfer ranges: {total}/{expected} bytes',flush=True)
+    actual=digest(ROOT/'candidate.zip')
+    receipt={'expectedBytes':expected,'actualBytes':total,'expectedSha256':os.environ['ARTIFACT_SHA256'],'actualSha256':actual,'status':'passed' if total==expected and actual==os.environ['ARTIFACT_SHA256'] else 'failed'}
+    (ROOT/'artifact-transfer.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt),flush=True)
+    assert receipt['status']=='passed','Entire artifact size/hash mismatch; see exact diagnostic receipt'
     with zipfile.ZipFile(ROOT/'candidate.zip') as archive:
         assert archive.testzip() is None
         for source,target in [('base/candidate.json','candidate.json'),('base/release.json','release.json'),('installer-signature.json','native.json')]:
