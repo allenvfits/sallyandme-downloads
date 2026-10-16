@@ -22,13 +22,13 @@ const disk=await statfs(root);assert.ok(disk.bavail*disk.bsize>m.archive.bytes+n
 for(const row of rows){
  assert.match(row.path,/^SallyAndMe-(?:Setup-0\.13\.1\.exe|0\.13\.0\.zip\.\d{3})$/);assert.ok(row.bytes>0&&row.bytes<2*1024**3);
  const asset=(row.path.endsWith('.exe')?nativeAssets:assets).find(a=>a.name===row.path);assert.ok(asset);assert.equal(asset.state,'uploaded');assert.equal(asset.size,row.bytes);assert.equal(asset.digest,'sha256:'+row.sha256);
- assert.equal(asset.browser_download_url,'https://github.com/'+repo+'/releases/download/'+(row.path.endsWith('.exe')?nativeTag:coreTag)+'/'+row.path);
+ const deliveryUrl='https://github.com/'+repo+'/releases/download/'+(row.path.endsWith('.exe')?nativeTag:coreTag)+'/'+row.path;
  let response=await fetch('https://api.github.com/repos/'+repo+'/releases/assets/'+asset.id,{headers:{...headers,Accept:'application/octet-stream'},redirect:'manual',signal:AbortSignal.timeout(1200000)});
  if(response.status===302){const u=new URL(response.headers.get('location'));assert.equal(u.protocol,'https:');assert.ok(u.hostname.endsWith('.githubusercontent.com')||u.hostname.endsWith('.blob.core.windows.net'));response=await fetch(u,{redirect:'error',signal:AbortSignal.timeout(1200000)});}
  assert.equal(response.status,200);const hash=createHash('sha256');let bytes=0;
  const counter=new Transform({transform(chunk,_encoding,callback){bytes+=chunk.length;if(bytes>row.bytes)return callback(Error('Hosted source exceeds pinned size'));hash.update(chunk);callback(null,chunk);}});
  await pipeline(Readable.fromWeb(response.body),counter,createWriteStream((row.path.endsWith('.exe')?nativeDir:base)+'/'+row.path,{flags:'wx'}));
- assert.equal(bytes,row.bytes);assert.equal(hash.digest('hex'),row.sha256);files.push({...row,url:asset.browser_download_url});console.log('Verified hosted input: '+row.path);
+ assert.equal(bytes,row.bytes);assert.equal(hash.digest('hex'),row.sha256);files.push({...row,url:deliveryUrl});console.log('Verified private hosted input; public URL remains pending publication: '+row.path);
 }
 await writeFile(base+'/candidate.json',JSON.stringify(m));await writeFile(nativeDir+'/installer-signature.json',JSON.stringify(native));
 await writeFile(root+'/hosting.json',JSON.stringify({status:'verified-private-components',releaseId:415071552,archiveSha256:m.archive.sha256,files,nativeInstaller:files[0]}));
