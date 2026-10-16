@@ -9,7 +9,9 @@ on:
         required: true
         type: string
 permissions:
-  contents: read
+  # GitHub requires push permission to read draft releases. The planner only
+  # performs GET requests and cannot publish through its operator script.
+  contents: write
 jobs:
   plan:
     runs-on: ubuntu-latest
