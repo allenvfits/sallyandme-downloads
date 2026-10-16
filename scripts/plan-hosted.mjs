@@ -13,12 +13,16 @@ const m=JSON.parse(Buffer.from(envelope.payload,'base64'));assert.equal(m.editio
 assert.equal(native.status,'passed');assert.equal(native.sha256,'21743fb8de76f1c6fe596b78fc89b1839edc86887c9933ee3a3ace2ba64cbd85');
 const headers={Authorization:'Bearer '+process.env.GH_TOKEN,Accept:'application/vnd.github+json'};
 async function api(path){const r=await fetch('https://api.github.com/repos/'+repo+path,{headers,redirect:'error'});assert.equal(r.status,200);return r.json();}
-const release=await api('/releases/415071552');assert.equal(release.draft,true);assert.equal(release.tag_name,'complete-0.13.1-'+m.packageManifestSha256);
-const assets=await api('/releases/415071552/assets'),rows=[{path:'SallyAndMe-Setup-0.13.1.exe',bytes:native.bytes,sha256:native.sha256},...m.parts],files=[];
+const coreTag=m.version+'-'+createHash('sha256').update([m.installer.sha256,m.archive.sha256,m.packageManifestSha256].join('\n')).digest('hex');
+const release=await api('/releases/415071552');assert.equal(release.draft,true);assert.equal(release.tag_name,coreTag);
+const nativeTag='desktop-0.13.1-'+native.sha256;
+const nativeRelease=(await api('/releases?per_page=100')).find(r=>r.tag_name===nativeTag);assert.equal(nativeRelease?.draft,true);
+const assets=await api('/releases/415071552/assets'),nativeAssets=await api('/releases/'+nativeRelease.id+'/assets'),rows=[{path:'SallyAndMe-Setup-0.13.1.exe',bytes:native.bytes,sha256:native.sha256},...m.parts],files=[];
 const disk=await statfs(root);assert.ok(disk.bavail*disk.bsize>m.archive.bytes+native.bytes+1024**3,'Insufficient isolated runner storage');
 for(const row of rows){
  assert.match(row.path,/^SallyAndMe-(?:Setup-0\.13\.1\.exe|0\.13\.0\.zip\.\d{3})$/);assert.ok(row.bytes>0&&row.bytes<2*1024**3);
- const asset=assets.find(a=>a.name===row.path);assert.ok(asset);assert.equal(asset.state,'uploaded');assert.equal(asset.size,row.bytes);assert.equal(asset.digest,'sha256:'+row.sha256);
+ const asset=(row.path.endsWith('.exe')?nativeAssets:assets).find(a=>a.name===row.path);assert.ok(asset);assert.equal(asset.state,'uploaded');assert.equal(asset.size,row.bytes);assert.equal(asset.digest,'sha256:'+row.sha256);
+ assert.equal(asset.browser_download_url,'https://github.com/'+repo+'/releases/download/'+(row.path.endsWith('.exe')?nativeTag:coreTag)+'/'+row.path);
  let response=await fetch('https://api.github.com/repos/'+repo+'/releases/assets/'+asset.id,{headers:{...headers,Accept:'application/octet-stream'},redirect:'manual',signal:AbortSignal.timeout(1200000)});
  if(response.status===302){const u=new URL(response.headers.get('location'));assert.equal(u.protocol,'https:');assert.ok(u.hostname.endsWith('.githubusercontent.com')||u.hostname.endsWith('.blob.core.windows.net'));response=await fetch(u,{redirect:'error',signal:AbortSignal.timeout(1200000)});}
  assert.equal(response.status,200);const hash=createHash('sha256');let bytes=0;
